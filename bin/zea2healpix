@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+# -*- mode: python -*-
+#
+# Copyright (c) 2016-2017 Weitian LI <weitian@aaronly.me>
+# MIT license
+
+"""
+Reproject the maps in ZEA (zenithal/azimuthal equal area) projection to
+Galactic frame and organize in HEALPix format.
+
+NOTE
+----
+One ZEA-projected FITS file only contains either the northern Galactic
+hemisphere (LAM_NSGP=1), or southern Galactic hemisphere (LAM_NSGP=-1).
+Thus two ZEA-projected FITS files should both be provided to get the
+full-sky map.
+"""
+
+import os
+import sys
+import argparse
+import logging
+
+import fg21sim
+from fg21sim.share import CONFIGS
+from fg21sim.utils import setup_logging
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Reproject two images in ZEA projection to HEALPix data")
+    parser.add_argument("infile1", help="one FITS image in ZEA projection")
+    parser.add_argument("infile2", help="other FITS image in ZEA projection")
+    parser.add_argument("outfile", help="output HEALPix data file")
+    parser.add_argument("-n", "--nside", dest="nside",
+                        type=int, required=True,
+                        help="HEALPix Nside for the output data")
+    parser.add_argument("-O", "--interp-order", dest="interp_order",
+                        type=int, default=1,
+                        help="interpolation order (integer, 0-5; default: 1)")
+    parser.add_argument("-I", "--inpaint", action="store_true",
+                        help="inpaint the missing pixels if present")
+    parser.add_argument("-C", "--clobber", action="store_true",
+                        help="overwrite the existing output file")
+    parser.add_argument("-l", "--log", dest="loglevel", default=None,
+                        choices=["debug", "info", "warning",
+                                 "error", "critical"],
+                        help="set the log level")
+    parser.add_argument("-L", "--logfile", default=None,
+                        help="filename where to save the log messages")
+    parser.add_argument("-Q", "--quiet", action="store_true",
+                        help="be quiet so do not log messages to screen")
+    args = parser.parse_args()
+
+    tool = os.path.basename(sys.argv[0])
+    pkgname = fg21sim.__pkgname__
+
+    log_stream = "" if args.quiet else None
+    setup_logging(dict_config=CONFIGS.logging,
+                  level=args.loglevel,
+                  stream=log_stream,
+                  logfile=args.logfile)
+    logger = logging.getLogger(tool)
+    logger.info("COMMAND: {0}".format(" ".join(sys.argv)))
+
+    history = [
+        "TOOL: {0}".format(tool),
+        "PARAM: {0}".format(" ".join(sys.argv[1:])),
+    ]
+    comments = [
+        'Tool "{0}" is part of the "{1}" package'.format(tool, pkgname),
+        'distributed under {0} license.'.format(fg21sim.__license__),
+        'See also {0}'.format(fg21sim.__url__)
+    ]
+
+    if os.path.exists(args.outfile):
+        if args.clobber:
+            logger.warning("Remove existing output file: %s" % args.outfile)
+            os.remove(args.outfile)
+        else:
+            raise OSError("Output file already exists: %s" % args.outfile)
+
+    logger.info("Importing modules + Numba JIT, waiting ...")
+    from fg21sim.utils.reproject import zea2healpix
+    from fg21sim.utils.io import write_fits_healpix
+    hp_data, hp_header, __ = zea2healpix(args.infile1, args.infile2,
+                                         nside=args.nside,
+                                         order=args.interp_order,
+                                         inpaint=args.inpaint,
+                                         append_history=history,
+                                         append_comment=comments)
+    write_fits_healpix(args.outfile, hpmap=hp_data, header=hp_header)
+    logger.info("HEALPix data write to FITS file: %s" % args.outfile)
+
+
+if __name__ == "__main__":
+    main()
