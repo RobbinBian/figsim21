@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+# -*- mode: python -*-
+#
+# Copyright (c) 2016-2017 Weitian LI <weitian@aaronly.me>
+# MIT license
+
+"""
+Start (and/or control) the Web user interface (UI) of "fg21sim",
+which is built using the Tornado_ web server and WebSocket_ protocol.
+
+.. _Tornado: http://www.tornadoweb.org/
+
+.. _WebSocket: https://en.wikipedia.org/wiki/WebSocket ,
+   http://caniuse.com/#feat=websockets
+"""
+
+
+import os
+import sys
+import logging
+import webbrowser
+
+import tornado.ioloop
+from tornado.options import define, options, parse_command_line
+
+from fg21sim.share import CONFIGS
+from fg21sim.utils import setup_logging
+from fg21sim.webui import Application
+
+
+# Each module can defines its own options, which are added to the global
+# namespace.  Therefore the defined options can also be used by other modules.
+define("host", default="localhost", type=str,
+       help=("IP address or hostname the server will listen on. "
+             "Specify '0.0.0.0' or '' (empty string) to listen on "
+             "all available interfaces."))
+define("port", default=21127, type=int, help="Server listen port")
+define("debug", default=False, help="Enable the debug mode")
+define("no_browser", default=False,
+       help="Do not open the Web UI in a browser after startup")
+
+
+def main():
+    options.logging = None
+    parse_command_line()
+
+    if options.host == "":
+        options.host = "0.0.0.0"
+
+    loglevel = "DEBUG" if options.debug else None
+    setup_logging(dict_config=CONFIGS.logging, level=loglevel)
+    tool = os.path.basename(sys.argv[0])
+    logger = logging.getLogger(tool)
+    logger.info("COMMAND: {0}".format(" ".join(sys.argv)))
+
+    application = Application(debug=options.debug)
+    application.listen(options.port, address=options.host)
+    listen_url = "http://{host}:{port}".format(host=options.host,
+                                               port=options.port)
+    access_url = "http://{host}:{port}".format(host="localhost",
+                                               port=options.port)
+    logger.info("Tornado started on: {0}".format(listen_url))
+    logger.info("You can use the Web UI by accessing:" +
+                "\n\t{0}".format(access_url))
+    if not options.no_browser:
+        # Open the Web UI in a new browser tab
+        webbrowser.open_new_tab(access_url)
+
+    tornado.ioloop.IOLoop.current().start()
+
+
+if __name__ == "__main__":
+    main()
