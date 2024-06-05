@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+#
+# Copyright (c) 2017-2018 Weitian LI <weitian@aaronly.me>
+# MIT license
+#
+
+"""
+Extract a patch of sky from the all-sky HEALPix map.
+"""
+
+
+import os
+import sys
+import argparse
+import logging
+
+from fg21sim.share import CONFIGS
+from fg21sim.utils import setup_logging
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Extract a patch from the all-sky HEALPix map")
+    parser.add_argument("-C", "--clobber", action="store_true",
+                        help="overwrite the existing output files")
+    parser.add_argument("-c", "--config", required=False,
+                        help="fg21sim configuration from which to " +
+                        "obtain the sky patch properties")
+    parser.add_argument("--center",
+                        help="center coordinate of the sky patch; " +
+                        "format: ra,dec; unit: deg")
+    parser.add_argument("--size",
+                        help="size of the sky patch; " +
+                        "format: xsize,ysize; unit: pixel")
+    parser.add_argument("--pixelsize", type=float,
+                        help="pixel size of the sky patch; unit: [arcsec]")
+    parser.add_argument("-S", "--smooth", action="store_true",
+                        help="Smooth the output patch with a Gaussian " +
+                        "filter of sigma 'sigma-npix' (next argument) " +
+                        "pixel size of the input HEALPix map")
+    parser.add_argument("--sigma-npix", dest="sigma_npix",
+                        type=float, default=2.0,
+                        help="number of pixels for the above Gaussian filter")
+    parser.add_argument("infile", help="input all-sky HEALPix map")
+    parser.add_argument("outfile", help="output extracted sky patch")
+    args = parser.parse_args()
+
+    setup_logging(dict_config=CONFIGS.logging)
+    tool = os.path.basename(sys.argv[0])
+    logger = logging.getLogger(tool)
+    logger.info("COMMAND: {0}".format(" ".join(sys.argv)))
+
+    if os.path.exists(args.outfile):
+        if args.clobber:
+            os.remove(args.outfile)
+            logger.warning("Removed existing output file: %s" % args.outfile)
+        else:
+            raise FileExistsError("Output file exists: %s" % args.outfile)
+
+    logger.info("Importing necessary modules, waiting ...")
+    import scipy.ndimage
+    import healpy as hp
+    from reproject import reproject_from_healpix
+    #
+    from fg21sim.sky import SkyPatch
+    from fg21sim.utils.io import read_fits_healpix
+    from fg21sim.utils.units import UnitConversions as AUC
+
+    if args.config:
+        CONFIGS.read_userconfig(args.config)
+        center = (CONFIGS.getn("sky/patch/xcenter"),
+                  CONFIGS.getn("sky/patch/ycenter"))  # [ deg ]
+        size = (CONFIGS.getn("sky/patch/xsize"),
+                CONFIGS.getn("sky/patch/ysize"))
+        pixelsize = CONFIGS.getn("sky/patch/pixelsize")  # [ arcsec ]
+    elif not all([args.center, args.size, args.pixelsize]):
+        raise ValueError("--center, --size, and --pixelsize are " +
+                         "required when --config is missing!")
+
+    if args.center:
+        center = args.center.split(",")
+        center = (float(center[0]), float(center[1]))
+    if args.size:
+        size = args.size.split(",")
+        size = (int(size[0]), int(size[1]))
+    if args.pixelsize:
+        pixelsize = args.pixelsize
+
+    logger.info("patch center: (%.3f, %.3f) [deg]" % center)
+    logger.info("patch size: (%d, %d) pixels" % size)
+    logger.info("patch pixel size: %.1f [arcsec]" % pixelsize)
+
+    sky = SkyPatch(size=size, pixelsize=pixelsize, center=center)
+    logger.info("Read HEALPix map from file: %s" % args.infile)
+    hpdata, hpheader = read_fits_healpix(args.infile)
+    nside = hpheader["NSIDE"]
+    nested = hpheader["ORDERING"].upper() == "NESTED"
+    try:
+        coordsys = hpheader["COORDSYS"]
+    except KeyError:
+        logger.warning("No 'COORDSYS' keyword for file: %s" % args.infile)
+        logger.warning("Assume to use the 'Galactic' coordinate")
+        coordsys = "Galactic"
+    logger.info("Reprojecting HEALPix map to sky patch ...")
+    image, __ = reproject_from_healpix(input_data=(hpdata, coordsys),
+                                       output_projection=sky.wcs,
+                                       shape_out=size, nested=nested)
+
+    if args.smooth:
+        logger.info("Smoothing the sky patch with a Gaussian filter ...")
+        sigma = (args.sigma_npix * hp.nside2resol(nside, arcmin=True) *
+                 AUC.arcmin2arcsec / pixelsize)
+        image = scipy.ndimage.gaussian_filter(image, sigma=sigma)
+        logger.info("Smoothed sky patch using Gaussian filter of " +
+                    "sigma = %.2f [pixel]" % sigma)
+
+    sky.merge_header(hpheader.copy(strip=True))
+    sky.add_history(" ".join(sys.argv))
+    sky.data = image
+    sky.write(args.outfile)
+    logger.info("Written extracted sky patch to file: %s" % args.outfile)
+
+
+if __name__ == "__main__":
+    main()
