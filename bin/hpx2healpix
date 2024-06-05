@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+# -*- mode: python -*-
+#
+# Copyright (c) 2016-2017 Weitian LI <weitian@aaronly.me>
+# MIT license
+
+"""
+Recover the sky map in HPX projection format back into HEALPix table format,
+i.e., the reverse of `healpix2hpx.py`.
+"""
+
+import os
+import sys
+import argparse
+import logging
+
+import fg21sim
+from fg21sim.share import CONFIGS
+from fg21sim.utils import setup_logging
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Recover the image in HPX projection to HEALPix data")
+    parser.add_argument("infile", help="input FITS image in HPX projection")
+    parser.add_argument("outfile", help="output HEALPix data file")
+    parser.add_argument("-C", "--clobber", action="store_true",
+                        help="overwrite the existing output file")
+    parser.add_argument("-l", "--log", dest="loglevel", default=None,
+                        choices=["debug", "info", "warning",
+                                 "error", "critical"],
+                        help="set the log level")
+    parser.add_argument("-L", "--logfile", default=None,
+                        help="filename where to save the log messages")
+    parser.add_argument("-Q", "--quiet", action="store_true",
+                        help="be quiet so do not log messages to screen")
+    args = parser.parse_args()
+
+    tool = os.path.basename(sys.argv[0])
+    pkgname = fg21sim.__pkgname__
+
+    log_stream = "" if args.quiet else None
+    setup_logging(dict_config=CONFIGS.logging,
+                  level=args.loglevel,
+                  stream=log_stream,
+                  logfile=args.logfile)
+    logger = logging.getLogger(tool)
+    logger.info("COMMAND: {0}".format(" ".join(sys.argv)))
+
+    history = [
+        "TOOL: {0}".format(tool),
+        "PARAM: {0}".format(" ".join(sys.argv[1:])),
+    ]
+    comments = [
+        'Tool "{0}" is part of the "{1}" package'.format(tool, pkgname),
+        'distributed under {0} license.'.format(fg21sim.__license__),
+        'See also {0}'.format(fg21sim.__url__)
+    ]
+
+    if os.path.exists(args.outfile):
+        if args.clobber:
+            logger.warning("Remove existing output file: %s" % args.outfile)
+            os.remove(args.outfile)
+        else:
+            raise OSError("Output file already exists: %s" % args.outfile)
+
+    logger.info("Importing modules + Numba JIT, waiting ...")
+    from fg21sim.utils.healpix import hpx2healpix
+    from fg21sim.utils.io import write_fits_healpix
+    hp_data, hp_header = hpx2healpix(args.infile,
+                                     append_history=history,
+                                     append_comment=comments)
+    write_fits_healpix(args.outfile, hpmap=hp_data, header=hp_header)
+    logger.info("HEALPix data write to FITS file: %s" % args.outfile)
+
+
+if __name__ == "__main__":
+    main()
