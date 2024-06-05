@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+# -*- mode: python -*-
+#
+# Copyright (c) 2016-2018 Weitian LI <weitian@aaronly.me>
+# MIT license
+
+"""
+Simulate the low-frequency radio foregrounds for the 21cm EoR signal.
+"""
+
+import os
+import sys
+import argparse
+import logging
+import time
+
+import fg21sim
+from fg21sim.share import CONFIGS, COSMO
+from fg21sim.utils import setup_logging
+
+VER_INFO = "%(name)s: v%(version)s @ %(date)s" % {
+    "name": fg21sim.__pkgname__,
+    "version": fg21sim.__version__,
+    "date": fg21sim.__date__
+}
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Simulate the radio foregrounds for 21cm EoR signal",
+        epilog="Set environment variable 'DEBUG_FG21SIM=1' to force debug!")
+    parser.add_argument("config", help="user configuration file")
+    parser.add_argument("-v", "--version", action="version", version=VER_INFO)
+    parser.add_argument("-l", "--log", dest="loglevel", default=None,
+                        choices=["debug", "info", "warning",
+                                 "error", "critical"],
+                        help="set the log level")
+    parser.add_argument("-L", "--logfile", default=None,
+                        help="filename where to save the log messages")
+    parser.add_argument("-Q", "--quiet", action="store_true",
+                        help="be quiet so do not log messages to screen")
+    args = parser.parse_args()
+
+    t1_start = time.perf_counter()
+    t2_start = time.process_time()
+
+    CONFIGS.read_userconfig(args.config)
+    if os.environ.get("DEBUG_FG21SIM"):
+        print("DEBUG: Current configurations:", CONFIGS._config,
+              sep="\n", file=sys.stderr)
+    CONFIGS.check_all()
+
+    log_stream = "" if args.quiet else None
+    setup_logging(dict_config=CONFIGS.logging,
+                  level=args.loglevel,
+                  stream=log_stream,
+                  logfile=args.logfile)
+    tool = os.path.basename(sys.argv[0])
+    logger = logging.getLogger(tool)
+    logger.info(VER_INFO)
+    logger.info("COMMAND: {0}".format(" ".join(sys.argv)))
+
+    # Save/backup current configurations
+    configfile_dump = os.path.splitext(CONFIGS.userconfig)[0] + "_dump.conf"
+    CONFIGS.save(configfile_dump, clobber=True)
+    logger.info("Saved current configurations to file: %s" % configfile_dump)
+
+    # Setup cosmology model
+    logger.info("Setup cosmology model with parameters from configs ...")
+    COSMO.setup(**CONFIGS.cosmology)
+
+    logger.info("Importing modules, waiting ...")
+    from fg21sim.foregrounds import Foregrounds
+    fg = Foregrounds(CONFIGS)
+    fg.preprocess()
+    fg.simulate()
+    fg.postprocess()
+
+    t1_cost = time.perf_counter() - t1_start
+    t2_cost = time.process_time() - t2_start
+    if t1_cost <= 3*60:
+        logger.info("Elapsed time: %.1f [sec]" % t1_cost)
+        logger.info("CPU process time: %.1f [sec]" % t2_cost)
+    else:
+        logger.info("Elapsed time: %.1f [min]" % (t1_cost/60))
+        logger.info("CPU process time: %.1f [min]" % (t2_cost/60))
+
+
+if __name__ == "__main__":
+    main()
